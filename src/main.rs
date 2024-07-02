@@ -5,14 +5,15 @@ use std::io::Read;
 use std::path::Path;
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderValue, COOKIE, REFERER};
+use std::time::Duration;
+use tokio::time::sleep;
+use json::parse;
 
 #[tokio::main]
 async fn main() {
-    // Hardcodear credenciales para propósitos de prueba
     let username = "admin";
     let password = "123456";
 
-    // Reemplaza "http://localhost:8080" con la URL correcta de tu instancia de qBittorrent
     let api = Qbit::new("http://localhost:8080", Credential::new(username, password));
 
     match api.get_version().await {
@@ -20,7 +21,6 @@ async fn main() {
         Err(e) => eprintln!("Failed to get version: {:?}", e),
     }
 
-    // Autenticar y obtener la cookie de sesión
     let client = Client::new();
     let auth_url = "http://localhost:8080/api/v2/auth/login";
     let params = [("username", username), ("password", password)];
@@ -44,10 +44,8 @@ async fn main() {
         .collect::<Vec<&str>>()
         .join("; ");
 
-    // Ruta del archivo torrent en el escritorio
     let torrent_path = Path::new("C:/Users/emili/OneDrive/Escritorio/Ghost.of.Tsushima.Directors.Cut.elamigos.torrent");
 
-    // Leer el archivo torrent
     let mut file = match File::open(&torrent_path) {
         Ok(file) => file,
         Err(e) => {
@@ -62,10 +60,8 @@ async fn main() {
         return;
     }
 
-    // Verificar el tamaño del buffer leído
     println!("Buffer length: {}", buffer.len());
 
-    // Crear el argumento para agregar el torrent
     let add_torrent_arg = AddTorrentArg {
         source: TorrentSource::TorrentFiles { torrents: buffer.clone() },
         savepath: None,
@@ -87,7 +83,6 @@ async fn main() {
 
     println!("Creating new reqwest client");
 
-    // Crear cliente reqwest con cookies de sesión y encabezado Referer
     let mut headers = HeaderMap::new();
     headers.insert(COOKIE, HeaderValue::from_str(&cookies).unwrap());
     headers.insert(REFERER, HeaderValue::from_str("http://localhost:8080").unwrap());
@@ -96,12 +91,10 @@ async fn main() {
         .build()
         .unwrap();
 
-    // Construir multipart/form-data
     let form = reqwest::multipart::Form::new()
         .part("torrents", reqwest::multipart::Part::bytes(buffer)
             .file_name("Ghost.of.Tsushima.Directors.Cut.elamigos.torrent"));
 
-    // Intentar agregar el torrent y obtener la respuesta como texto
     match client.post("http://localhost:8080/api/v2/torrents/add")
         .multipart(form)
         .send()
@@ -113,6 +106,7 @@ async fn main() {
 
                 if status.is_success() {
                     println!("Torrent added successfully");
+                    check_download_progress(&client, &cookies).await;
                 } else {
                     eprintln!("Failed to add torrent. Status: {}", status);
                 }
@@ -120,3 +114,52 @@ async fn main() {
             Err(e) => eprintln!("Failed to send request: {:?}", e),
     }
 }
+
+async fn check_download_progress(client: &Client, cookies: &str) {
+    let url = "http://localhost:8080/api/v2/torrents/info";
+    let mut headers = HeaderMap::new();
+    headers.insert(COOKIE, HeaderValue::from_str(cookies).unwrap());
+
+    loop {
+        match client.get(url)
+            .headers(headers.clone())
+            .send()
+            .await {
+            Ok(response) => {
+                if response.status().is_success() {
+                    match response.text().await {
+                        Ok(text) => {
+                            parse_torrents_info(&text);
+                        }
+                        Err(e) => eprintln!("Failed to get response text: {:?}", e),
+                    }
+                } else {
+                    eprintln!("Failed to fetch torrents. Status: {}", response.status());
+                }
+            }
+            Err(e) => eprintln!("Failed to send request: {:?}", e),
+        }
+        sleep(Duration::from_secs(10)).await;
+    }
+}
+
+fn parse_torrents_info(json_text: &str) {
+    let parsed = parse(json_text);
+    match parsed {
+        Ok(torrents) => {
+            if torrents.is_array() {
+                for torrent in torrents.members() {
+                    let name = torrent["name"].as_str().unwrap_or("Unknown");
+                    let progress = torrent["progress"].as_f64().unwrap_or(0.0) * 100.0;
+                    println!("Torrent: {} - Progreso: {:.2}%", name, progress);
+                }
+            } else {
+                eprintln!("Expected an array in JSON response");
+            }
+        }
+        Err(e) => eprintln!("Failed to parse JSON response: {:?}", e),
+    }
+}
+
+
+
