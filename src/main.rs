@@ -151,7 +151,16 @@ fn parse_torrents_info(json_text: &str) {
                 for torrent in torrents.members() {
                     let name = torrent["name"].as_str().unwrap_or("Unknown");
                     let progress = torrent["progress"].as_f64().unwrap_or(0.0) * 100.0;
+                    let download_speed = torrent["dlspeed"].as_f64().unwrap_or(0.0) / 1_000_000.0; // as MB/s
+                    let total_size = torrent["total_size"].as_f64().unwrap_or(0.0) / (1_024.0 * 1_024.0 * 1_024.0); // as GB
+                    let eta = torrent["eta"].as_i64().unwrap_or(0); // in seconds
+                    let eta_minutes = eta / 60;
+                    let eta_seconds = eta % 60;
+
                     println!("Torrent: {} - Progreso: {:.2}%", name, progress);
+                    println!("Velocidad de descarga: {:.2} MB/s", download_speed);
+                    println!("Tamaño total: {:.2} GB", total_size);
+                    println!("Tiempo estimado para terminar: {} minutos y {} segundos", eta_minutes, eta_seconds);
                 }
             } else {
                 eprintln!("Expected an array in JSON response");
@@ -160,6 +169,3 @@ fn parse_torrents_info(json_text: &str) {
         Err(e) => eprintln!("Failed to parse JSON response: {:?}", e),
     }
 }
-
-
-
